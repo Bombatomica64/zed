@@ -717,6 +717,7 @@ fn checked_offset(position: usize, offset: isize, document_length: usize) -> Opt
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    use gpui::TextInputPurpose;
 
     #[test]
     fn insertion_geometry_has_a_visible_caret_width() {
@@ -882,6 +883,7 @@ pub(super) mod tests {
             autocapitalize: Autocapitalize::Sentences,
             suggestions: true,
             input_action: TextInputAction::Search,
+            purpose: TextInputPurpose::Text,
         });
         assert_eq!(view.autocorrectionType(), UITextAutocorrectionType::Yes);
         assert_eq!(

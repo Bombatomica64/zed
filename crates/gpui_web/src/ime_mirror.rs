@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration};
+use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration, TextInputPurpose};
 use wasm_bindgen::JsCast;
 
 use crate::window::WebWindowInner;
@@ -81,6 +81,9 @@ pub(crate) struct ImeMirror {
     /// selection has moved; a rejected import means no import is coming,
     /// so the next sync must reassert the app's state instead of waiting.
     selection_import_rejected: Cell<bool>,
+    /// The `inputmode` the configured purpose asks for while the virtual
+    /// keyboard is enabled (a disabled keyboard is `inputmode="none"`).
+    input_mode: Cell<&'static str>,
 }
 
 impl ImeMirror {
@@ -129,6 +132,7 @@ impl ImeMirror {
             window_hint: Cell::new(0),
             sync_scheduled: Cell::new(false),
             selection_import_rejected: Cell::new(false),
+            input_mode: Cell::new("text"),
         };
         // Until an input handler asks otherwise, the element is an IME
         // conduit, not a form field: browser-side text assistance would
@@ -143,13 +147,20 @@ impl ImeMirror {
     /// can restart the IME's input connection.
     pub(crate) fn apply_configuration(&self, configuration: &TextInputConfiguration) {
         let element: &web_sys::Element = self.element.as_ref();
-        self.element.set_spellcheck(configuration.suggestions);
+        // A textarea can't be a password field, so keep secret text out of
+        // the keyboard's suggestions and learning whatever else was asked.
+        let secret = matches!(
+            configuration.purpose,
+            TextInputPurpose::Password | TextInputPurpose::NumericPassword
+        );
+        let suggestions = configuration.suggestions && !secret;
+        self.element.set_spellcheck(suggestions);
         let on_off = |enabled: bool| if enabled { "on" } else { "off" };
         element
-            .set_attribute("autocomplete", on_off(configuration.suggestions))
+            .set_attribute("autocomplete", on_off(suggestions))
             .ok();
         element
-            .set_attribute("autocorrect", on_off(configuration.autocorrect))
+            .set_attribute("autocorrect", on_off(configuration.autocorrect && !secret))
             .ok();
         element
             .set_attribute(
@@ -176,6 +187,18 @@ impl ImeMirror {
             Some(hint) => element.set_attribute("enterkeyhint", hint).ok(),
             None => element.remove_attribute("enterkeyhint").ok(),
         };
+        let input_mode = match configuration.purpose {
+            TextInputPurpose::Text | TextInputPurpose::Password => "text",
+            TextInputPurpose::Search => "search",
+            TextInputPurpose::Email => "email",
+            TextInputPurpose::Url => "url",
+            TextInputPurpose::Phone => "tel",
+            TextInputPurpose::Numeric | TextInputPurpose::NumericPassword => "numeric",
+            TextInputPurpose::Decimal => "decimal",
+        };
+        if self.input_mode.replace(input_mode) != input_mode && self.virtual_keyboard_enabled() {
+            self.set_virtual_keyboard_enabled(true);
+        }
     }
 
     pub(crate) fn event_target(&self) -> &web_sys::EventTarget {
@@ -217,10 +240,12 @@ impl ImeMirror {
     }
 
     pub(crate) fn set_virtual_keyboard_enabled(&self, enabled: bool) {
-        if let Err(error) = self
-            .element
-            .set_attribute("inputmode", if enabled { "text" } else { "none" })
-        {
+        let input_mode = if enabled {
+            self.input_mode.get()
+        } else {
+            "none"
+        };
+        if let Err(error) = self.element.set_attribute("inputmode", input_mode) {
             log::warn!("Failed to configure input mode: {error:?}");
         }
     }
