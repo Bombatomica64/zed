@@ -288,7 +288,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, FocusHandle, InteractiveElement as _, IntoElement,
-        ParentElement as _, Render, Styled as _, TestAppContext, TextInputAction,
+        ParentElement as _, Render, Styled as _, TestAppContext, TextInputAction, TextInputPurpose,
         TextInputStateChange, canvas, div,
     };
 
@@ -297,6 +297,7 @@ mod tests {
         let custom = TextInputConfiguration {
             autocorrect: true,
             input_action: TextInputAction::Send,
+            purpose: TextInputPurpose::Email,
             ..Default::default()
         };
         let window = cx.add_window({
@@ -345,7 +346,7 @@ mod tests {
 
         // Changing the configuration forwards the new value.
         let updated = TextInputConfiguration {
-            suggestions: true,
+            purpose: TextInputPurpose::Password,
             ..custom
         };
         view.update(cx, {
