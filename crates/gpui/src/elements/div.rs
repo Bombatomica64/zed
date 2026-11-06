@@ -2386,11 +2386,11 @@ impl Interactivity {
                     }
                 } else if focus_handle.is_focused(window) {
                     // Focusable, but with no element id it can't have an
-                    // accessibility node, so screen readers fall back to the
-                    // whole window.
+                    // accessibility node: focus goes to the nearest focusable
+                    // accessible ancestor, or else the whole window.
                     window
                         .a11y
-                        .note_focus_without_node(focus_handle.id, "it has no element id");
+                        .focus_without_node(focus_handle.id, "it has no element id");
                 }
             }
         }
@@ -5789,5 +5789,61 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+
+    struct FieldWithInnerEditor {
+        frame: FocusHandle,
+        editor: FocusHandle,
+        editor_has_id: bool,
+    }
+
+    impl Render for FieldWithInnerEditor {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let editor = div().track_focus(&self.editor).size_full();
+            div().size_full().child(
+                div()
+                    .id("field")
+                    .role(accesskit::Role::TextInput)
+                    .aria_label("Email")
+                    .track_focus(&self.frame)
+                    .size_full()
+                    .child(div().child(if self.editor_has_id {
+                        editor.id("editor").into_any_element()
+                    } else {
+                        editor.into_any_element()
+                    })),
+            )
+        }
+    }
+
+    // A composite widget keeps keyboard focus on an inner element with no
+    // node (an editor) and its role on an outer focusable frame. The frame
+    // contains the focus, so it is the node reported as focused.
+    #[gpui::test]
+    fn a11y_focus_goes_to_the_focusable_ancestor_of_a_node_less_element(cx: &mut TestAppContext) {
+        for editor_has_id in [false, true] {
+            let window = cx.add_window(|_, cx| FieldWithInnerEditor {
+                frame: cx.focus_handle(),
+                editor: cx.focus_handle(),
+                editor_has_id,
+            });
+            let (focus, field) = cx
+                .update_window(window.into(), |view, window, cx| {
+                    let view = view.downcast::<FieldWithInnerEditor>().unwrap();
+                    view.read(cx).editor.clone().focus(window, cx);
+                    window.a11y.activate_for_test();
+                    window.draw(cx).clear(cx);
+                    let update = window.a11y.last_tree_update().expect("a tree update");
+                    let field = update
+                        .nodes
+                        .iter()
+                        .find(|(_, node)| node.role() == accesskit::Role::TextInput)
+                        .map(|(id, _)| *id)
+                        .expect("the field's node");
+                    (update.focus, field)
+                })
+                .unwrap();
+            assert_eq!(focus, field, "editor_has_id: {editor_has_id}");
+        }
     }
 }
